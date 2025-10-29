@@ -1,9 +1,15 @@
 #WinDrawer.py
-import sys
-from PyQt6.QtWidgets import QApplication
-from visual import CR_Mwin, Anim_AppearMwin, BD_kSC, add_func_menu_button, Strict_Spec_CfgFile
-from pathlib import Path
 import json
+import os
+import sys
+from pathlib import Path
+
+import win32api
+import win32event
+import winerror
+from PyQt6.QtWidgets import QApplication
+from visual import (CR_Mwin, Anim_AppearMwin, BD_kSC, add_func_menu_button,
+                    Strict_Spec_CfgFile, )
 
 def create_resources():#创建必要的资源和配置文件，符合规范
     if getattr(sys, 'frozen', False):
@@ -47,7 +53,32 @@ def init():
     app.setApplicationName("WinDrawer")
     return app
 
+_app_mutex = None
+def check_single_instance(): # 互斥锁
+    global _app_mutex
+    mutex_name = "Global\\WinDrawer_SingleInstance_Mutex"
+    try:
+        mutex = win32event.OpenMutex(win32event.SYNCHRONIZE, False, mutex_name)
+        if mutex:
+            win32api.CloseHandle(mutex)
+            return False
+    except Exception as e:
+        pass
+    # 创建互斥锁并保存为全局变量
+    try:
+        _app_mutex = win32event.CreateMutex(None, True, mutex_name)
+        last_error = win32api.GetLastError()
+        if last_error == winerror.ERROR_ALREADY_EXISTS:
+            return False
+        else:
+            return True
+    except Exception as e:
+        print(f"[DEBUG] 创建互斥锁异常: {e}")
+        return False
+
 def Mfun():
+    if not check_single_instance():
+        sys.exit(1)
     if not Strict_Spec_CfgFile():
         create_resources()
     app = init()
@@ -57,6 +88,12 @@ def Mfun():
     add_func_menu_button(Mwin)
     sys.exit(app.exec())
 
-
 if __name__ == '__main__':
     Mfun()
+
+
+'''更新计划：
+.bat快捷方式处理
+与win键同时相应
+网格对齐
+'''
