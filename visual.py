@@ -1,18 +1,23 @@
 #visual.py
-from PyQt6.QtWidgets import (QMainWindow, QApplication, QSystemTrayIcon, QMenu,
-                            QMdiArea, QMdiSubWindow, QWidget, QVBoxLayout, QFrame,
-                            QLabel, QSizePolicy, QHBoxLayout, QPushButton, QGridLayout,
-                            QScrollArea, QDialog, QLineEdit, QMenu, QMessageBox, QFileIconProvider,
-                            QFileDialog)
-from PyQt6.QtCore import (QPropertyAnimation, QEasingCurve, QRect, Qt, QEvent,
-                          QTimer, QObject, pyqtSignal, QFileInfo, QSize)
-from PyQt6.QtGui import QIcon, QCursor
-import os, json, shutil, sys, ctypes
-from pathlib import Path
+import ctypes
+import json
+import os
+import shutil
+import sys
 from math import ceil
-import win32api, win32con, pythoncom, win32com.client, win32timezone
-from pynput.keyboard import HotKey, Listener
+from pathlib import Path
 
+import win32api
+import win32com.client
+import win32con
+import win32timezone
+from PyQt6.QtCore import (QPropertyAnimation, QEasingCurve, QRect, Qt, QTimer, QTime, QDateTime, QObject, pyqtSignal, QFileInfo, QSize)
+from PyQt6.QtGui import QIcon, QCursor, QFont
+from PyQt6.QtWidgets import (QMainWindow, QApplication, QSystemTrayIcon, QMdiArea, QMdiSubWindow, QWidget, QVBoxLayout,
+                             QLabel, QSizePolicy, QHBoxLayout, QPushButton, QGridLayout,
+                             QScrollArea, QDialog, QLineEdit, QMenu, QMessageBox, QFileIconProvider,
+                             QFileDialog, QCheckBox, QSpinBox, QComboBox, QSlider, QGroupBox, QLCDNumber)
+from pynput.keyboard import HotKey, Listener
 
 def Strict_Spec_CfgFile():#返回布尔值，True表示符合规范，False表示不符合
     config_file = Path("config.json")
@@ -124,9 +129,42 @@ MIN_SIZE  = sidelen*2 + SideLen  # 最小尺寸限制
 XYCtrlCTN = (364, 364)  # 窗口默认大小
 MAX_TEXT_LENGTH = 8  # 每行最大字符数
 WRAP_SYMBOLS = ['：', ':', '-', ' ']  # 触发换行的符号
-
+REST_TIMER = None  # 休息提示计时器
+REST_ENABLED = False  # 休息提示功能开关
+REST_INTERVAL = 30 # 休息间隔时长（分钟）
 AUTO_HIDE = True  # 自动收起功能开关
 AUTO_CAPS = True  # 自动关闭大写锁定开关
+REST_PROMPT_LOOP = False  # 息息提示循环开关
+HOTKEY = '<alt>+<caps_lock>' # 快捷键设置
+OPACITY = 0.75  # 窗口透明度
+ColorList = [] # 主题颜色列表
+WIN_RATIO = 0.8
+
+try:
+    ColorList_Dk = ["#000000", "#FFFFFF", "#1a1a1a", "#2d2d2d", "#404040", "#5a5a5a", "#747474"]
+    ColorList_Lt = ["#FFFFFF", "#000000", "#cdcdcd", "#d7d7d7", "#e1e1e1", "#ebebeb", "#f5f5f5"]
+    config_path = "config.json"
+    if os.path.exists(config_path):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        settings = config.get("settings", {})
+        # 读取各配置项，如果不存在则使用默认值
+        AUTO_CAPS = settings.get("auto_caps", AUTO_CAPS)
+        AUTO_HIDE = settings.get("auto_hide", AUTO_HIDE)
+        HOTKEY = settings.get("hotkey", HOTKEY)
+        REST_PROMPT_LOOP = settings.get("rest_prompt_loop", REST_PROMPT_LOOP)
+        OPACITY = settings.get("opacity", OPACITY)
+        WIN_RATIO = settings.get("win_ratio", WIN_RATIO)
+        theme = settings.get("theme", "深色主题")
+        if theme == "浅色主题":
+            ColorList = ColorList_Lt
+        else:
+            ColorList = ColorList_Dk
+        print(f'[INFO] 配置文件加载成功')
+    else:
+        print("[INFO] 配置文件不存在，使用默认设置")
+except Exception as e:
+    print(f"[ERROR] 加载配置文件失败: {e}")
 
 class CtrlCTN(QMdiSubWindow):  #子窗口类
     config_updated_signal = pyqtSignal()
@@ -142,7 +180,9 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
         self.setWindowFlags(Qt.WindowType.CustomizeWindowHint |
                             Qt.WindowType.SubWindow |
                             Qt.WindowType.WindowTitleHint )
-        self.setStyleSheet("""QMdiSubWindow {border: 2px solid gray !important;}""")
+        sub_window_style = (f"QMdiSubWindow {{ "
+                            f"border: 2px solid {ColorList[6]} !important; background-color: {ColorList[2]}; }}")
+        self.setStyleSheet(sub_window_style)
         self.config_updated_signal.connect(self.ref_btns)
         self.now_Geoattr = None
         self.default_pos = (9,9)
@@ -172,24 +212,15 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
         self.menu_btn = QPushButton("≡", self)
         self.menu_btn.setFixedSize(16, 16)
         self.menu_btn.setObjectName("windowMenuBtn")
-        self.menu_btn.setStyleSheet("""
-            QPushButton#windowMenuBtn {
-                background-color: transparent;
-                border: none;
-                color: #000000;           
-                font-weight: bold;        
-                font-size: 14px;         
-            }
-            QPushButton#windowMenuBtn:hover {
-                background-color: #e0e0e0;
-                border-radius: 2px;     
-            }
-            QPushButton#windowMenuBtn:pressed {
-                background-color: #c0c0c0;  
-            }
-        """)
+        window_menu_btn_style = f"""
+        QPushButton#windowMenuBtn {{
+            background-color: transparent;border: none;color: {ColorList[1]};font-weight: bold;font-size: 14px;}}
+        QPushButton#windowMenuBtn:hover {{background-color: {ColorList[6]};border-radius: 2px;}}
+        QPushButton#windowMenuBtn:pressed {{background-color: {ColorList[5]};}}"""
+        self.menu_btn.setStyleSheet(window_menu_btn_style)
         # 创建功能菜单
         self.window_menu = QMenu(self)
+        self.window_menu.setWindowOpacity(0.8)
         rename_action = self.window_menu.addAction("重命名窗口")  # 增
         rename_action.triggered.connect(self._rename_window)
         delete_action = self.window_menu.addAction("删除窗口")
@@ -317,12 +348,10 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
             btn_order = current_win_config.get("win_btn_order", [])
             if button_index >= len(btn_order):
                 return
-
             # 获取按钮名称用于显示
             btn_key = btn_order[button_index]
             btn_config = current_btns[btn_key]
             btn_name = btn_config.get(f"{btn_key}_N", f"按钮{button_index}")
-
             # 定义删除操作函数
             def perform_deletion():
                 try:
@@ -333,26 +362,23 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
                     current_win_config = win_data[self.win_key]
                     current_btns = current_win_config.get("win_btn_data", {})
                     btn_order = current_win_config.get("win_btn_order", [])
-
                     # 获取按钮路径并删除对应的快捷方式文件
                     btn_path = btn_config.get(f"{btn_key}_Pth", "")
                     if btn_path:
                         try:
                             path_obj = Path(btn_path)
                             if path_obj.exists():
-                                path_obj.unlink()  # 删除文件
+                                path_obj.unlink()
                                 print(f"[INFO] 已删除快捷方式文件: {btn_path}")
                             else:
                                 print(f"[WARNING] 快捷方式文件不存在: {btn_path}")
                         except Exception as file_e:
                             print(f"[ERROR] 删除快捷方式文件失败 {btn_path}: {file_e}")
-
                     # 从配置中删除按钮
                     if btn_key in current_btns:
                         del current_btns[btn_key]
                     if btn_key in btn_order:
                         btn_order.remove(btn_key)
-
                     # 更新配置文件
                     current_win_config["win_btn_data"] = current_btns
                     current_win_config["win_btn_order"] = btn_order
@@ -364,23 +390,16 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
                     print(f"[INFO] 按钮 {btn_name} 已删除")
                 except Exception as e:
                     print(f"[ERROR] 执行删除操作失败: {e}")
-
-            # 创建非模态确认对话框
             dialog = MessageDialog(
                 parent=self, editable=False, default_text=btn_name, modal=False,
                 title="确认删除", message="确定要删除这个按钮吗？",
-                width=300, height=150, auto_close=3000
-            )
-
-            # 连接对话框关闭信号
+                width=300, height=150, auto_close=3000)
             def on_dialog_finished(result_code):
                 # 只有明确点击取消按钮才不执行删除
                 if result_code == QDialog.DialogCode.Rejected:
                     print("[INFO] 用户取消删除操作")
                     return
-                # 其他情况（确定、自动关闭、窗口关闭）都执行删除
                 perform_deletion()
-
             dialog.finished.connect(on_dialog_finished)
             dialog.show()
 
@@ -469,23 +488,12 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
                 else:
                     button.setText(wrap_button_text(buttonTEXT))
                 button.clicked.connect(lambda checked, idx=i: self._open_button_file(idx))
-                button.setStyleSheet("""
-                    QPushButton {
-                        background-color: transparent;
-                        border: none;
-                        border-radius: 4px;
-                        padding: 2px;
-                        text-align: center;
-                        font-size: 9px;
-                    }
-                    QPushButton:hover {
-                        background-color: #404040;
-                        border: 1px solid #606060;
-                    }
-                    QPushButton:pressed {
-                        background-color: #606060;
-                    }
-                """)
+                grid_button_style = f"""
+                QPushButton {{background-color: transparent;border: none;border-radius: 4px;
+                    padding: 2px;text-align: center;font-size: 9px;color: {ColorList[1]};}}
+                QPushButton:hover {{background-color: {ColorList[4]};border: 1px solid {ColorList[5]};}}
+                QPushButton:pressed {{background-color: {ColorList[5]};}}"""
+                button.setStyleSheet(grid_button_style)
             self._setup_button_context_menu(button, i)
             row = i//maxcols
             col = i % maxcols
@@ -537,22 +545,13 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
         menu_container.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.Popup |
-            Qt.WindowType.WindowStaysOnTopHint
-        )
+            Qt.WindowType.WindowStaysOnTopHint)
         menu_container.setWindowOpacity(0.8)
-        menu_container.setStyleSheet("""
-            QMenu {
-                background-color: #000000;
-                border: 1px solid #cccccc;
-            }
-            QMenu::item {
-                padding: 4px 8px;
-                background-color: transparent;
-            }
-            QMenu::item:selected {
-                background-color: #404040;
-            }
-        """)
+        button_context_menu_style = f"""
+        QMenu {{background-color: {ColorList[0]};border: 1px solid {ColorList[6]};}}
+        QMenu::item {{padding: 4px 8px;background-color: transparent;color: {ColorList[1]};}}
+        QMenu::item:selected {{background-color: {ColorList[4]};}}"""
+        menu_container.setStyleSheet(button_context_menu_style)
         # 创建菜单按钮
         menu_items = [
             ("打开", lambda: self._open_button_file(index)),
@@ -601,7 +600,7 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
         except Exception as e:
             print(f"[ERROR] 重命名按钮失败: {e}")
 
-    def _rename_window(self):  # 增
+    def _rename_window(self):
         try:
             old_name = self.windowTitle()
             dialog = MessageDialog(
@@ -629,7 +628,6 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
             print(f"[ERROR] 重命名窗口失败: {e}")
 
     def _move_button_to_window(self, button_index):  # 移动按钮到其他窗口
-        print(f"移动按钮 {button_index} 到其他窗口")
         try:
             # 读取配置文件
             if not os.path.exists(self.config_path):
@@ -666,13 +664,13 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
                 Qt.WindowType.Popup |
                 Qt.WindowType.WindowStaysOnTopHint
             )
-            menu_container.setWindowOpacity(0.9)
-            menu_container.setStyleSheet("""
-                    QWidget {
-                        background-color: #000000;
-                        border: 1px solid #cccccc;
-                    }
-                """)
+            menu_container.setWindowOpacity(0.7)
+            move_menu_style = f"""
+                   QWidget {{background-color: {ColorList[2]};border: 1px solid {ColorList[5]};}}
+                   QPushButton {{background-color: {ColorList[2]};color: {ColorList[1]};
+                       border: none;padding: 6px 8px;text-align: left;font-size: 12px;}}
+                   QPushButton:hover {{background-color: {ColorList[4]};}}"""
+            menu_container.setStyleSheet(move_menu_style)
             layout = QVBoxLayout(menu_container)
             layout.setSpacing(0)
             layout.setContentsMargins(0, 0, 0, 0)
@@ -680,18 +678,6 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
             for win_key, win_name in other_windows.items():
                 win_btn = QPushButton(win_name, menu_container)
                 win_btn.setFixedSize(120, 24)
-                win_btn.setStyleSheet("""
-                        QPushButton {
-                            border: none;
-                            background-color: #000000;
-                            font-size: 12px;
-                            padding: 2px;
-                            text-align: left;
-                        }
-                        QPushButton:hover {
-                            background-color: #404040;
-                        }
-                    """)
                 win_btn.clicked.connect(
                     lambda checked, target_win=win_key: self._perform_button_move(
                         config, btn_key, btn_config, target_win, menu_container))
@@ -881,9 +867,9 @@ class CtrlCTN(QMdiSubWindow):  #子窗口类
 
 class GlobalHotkeyListener(QObject):
     Evt = pyqtSignal()
-    def __init__(self, hotkey: str = '<alt>+<caps_lock>'):
+    def __init__(self, hotkey: str = HOTKEY):
         super().__init__()
-        self.hotkey = hotkey
+        self.hotkey = hotkey or HOTKEY
         self.hotkey_listener = None
         self.listener_thread = None
         self.TGL = True
@@ -920,19 +906,12 @@ class MenuBtn(QPushButton):#菜单按钮类
         self.func = func
         self.setFixedSize(64, 64)
         self.clicked.connect(self._on_click)
-        self.setStyleSheet("""
-                    QPushButton {
-                        background-color: transparent;
-                        border: 1px solid transparent;
-                        border-radius: 4px;
-                    }
-                    QPushButton:hover {
-                        background-color: #404040;
-                    }
-                    QPushButton:pressed {
-                        background-color: #606060;
-                    }
-                """)
+        menu_button_style = f"""
+        QPushButton {{
+            background-color: transparent;border: 1px solid transparent;border-radius: 4px;color: {ColorList[1]};}}
+        QPushButton:hover {{background-color: {ColorList[4]};}}
+        QPushButton:pressed {{background-color: {ColorList[5]};}}"""
+        self.setStyleSheet(menu_button_style)
 
     def _on_click(self):  # 按钮点击事件处理
         try:
@@ -998,71 +977,23 @@ class MessageDialog(QDialog): #用于统一管理项目中的各种通知和输�
             self._apply_default_style()
 
     def _apply_default_style(self): #应用默认样式表
-        default_style = """
-        MessageDialog {
-            background-color: #2b2b2b;
-            color: #ffffff;
-            font-family: "Microsoft YaHei";
-            font-size: 14px;
-            border: 1px solid #555555;
-            border-radius: 4px;
-        }
-         MessageDialog QWidget#qt_calendar_navigationbar {
-            background-color: #2b2b2b;
-        }
-        MessageDialog::title {
-            background-color: #2b2b2b;
-            color: #ffffff;
-            font-size: 14px;
-            font-weight: bold;
-            padding: 4px 8px;
-            height: 20px;
-        }
-        QLabel {
-            color: #cccccc;
-            padding: 4px 4px;
-            font-size: 13px;
-            background-color: transparent;
-        }
-        QLineEdit {
-            background-color: #2e2e2e;
-            color: #ffffff;
-            border: none;
-            border-radius: 2px;
-            padding: 6px 8px;
-            margin: 4px 8px;
-            font-size: 13px;
-            selection-background-color: #404040;
-        }
-        QLineEdit:focus {
-            background-color: #323232;
-        }
-        QLineEdit:read-only {
-            background-color: #2e2e2e;
-            color: #888888;
-        }
-        QPushButton {
-            background-color: #3a3a3a;
-            color: #ffffff;
-            border: 1px solid #4a4a4a;
-            border-radius: 2px;
-            padding: 6px 12px;
-            margin: 4px 2px;
-            font-size: 13px;
-            min-width: 60px;
-        }
-        QPushButton:hover {
-            background-color: #454545;
-            border: 1px solid #555555;
-        }
-        QPushButton:pressed {
-            background-color: #505050;
-        }
-        QPushButton:focus {
-            outline: none;
-            border: 1px solid #606060;
-        }
-        """
+        default_style = f"""
+        MessageDialog {{background-color: {ColorList[2]};color: {ColorList[2]};font-family: "Microsoft YaHei";
+            font-size: 14px;border: 1px solid {ColorList[5]};border-radius: 4px;}}
+        MessageDialog QWidget#qt_calendar_navigationbar {{background-color: {ColorList[2]};}}
+        MessageDialog::title {{background-color: {ColorList[2]};color: {ColorList[1]};font-size: 14px;
+            font-weight: bold;padding: 4px 8px;height: 20px;}}
+        QLabel {{color: {ColorList[1]};padding: 4px 4px;font-size: 13px;background-color: transparent;}}
+        QLineEdit {{
+            background-color: {ColorList[3]};color: {ColorList[1]};border: none;border-radius: 2px;
+            padding: 6px 8px;margin: 4px 8px;font-size: 13px;selection-background-color: {ColorList[4]};}}
+        QLineEdit:focus {{background-color: {ColorList[4]};}}
+        QLineEdit:read-only {{background-color: {ColorList[3]};color: {ColorList[6]};}}
+        QPushButton {{background-color: {ColorList[3]};color: {ColorList[1]};border: 1px solid {ColorList[4]};
+            border-radius: 2px;padding: 6px 12px;margin: 4px 2px;font-size: 13px;min-width: 60px;}}
+        QPushButton:hover {{background-color: {ColorList[4]};border: 1px solid {ColorList[5]};}}
+        QPushButton:pressed {{background-color: {ColorList[5]};}}
+        QPushButton:focus {{outline: none;border: 1px solid {ColorList[6]};}}"""
         self.setStyleSheet(default_style)
 
     def _on_ok(self): #确定按钮点击事件
@@ -1088,10 +1019,7 @@ class MessageDialog(QDialog): #用于统一管理项目中的各种通知和输�
 
 def get_file_icon(file_path):  # 使用获取文件图标
     try:
-        print(f"[DEBUG] 开始获取图标，文件路径: {file_path}")
-
         if file_path.lower().endswith('.lnk'):
-            print("[DEBUG] 处理.lnk文件")
             import pythoncom
             from win32com.shell import shell, shellcon
             shortcut = pythoncom.CoCreateInstance(
@@ -1100,14 +1028,11 @@ def get_file_icon(file_path):  # 使用获取文件图标
                 pythoncom.CLSCTX_INPROC_SERVER,
                 shell.IID_IShellLink
             )
-            print("[DEBUG] ShellLink实例创建成功")
             shortcut.QueryInterface(pythoncom.IID_IPersistFile).Load(file_path)
             # 获取目标路径
             target_path = shortcut.GetPath(0)[0]
-            print(f"[DEBUG] 解析到目标路径: {target_path}")
             file_info = QFileInfo(target_path)
         elif file_path.lower().endswith('.url'):
-            print("[DEBUG] 处理.url文件")
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -1115,11 +1040,9 @@ def get_file_icon(file_path):  # 使用获取文件图标
                 for line in content.split('\n'):
                     if line.lower().startswith('iconfile='):
                         icon_path = line.split('=', 1)[1].strip()
-                        print(f"[DEBUG] 找到IconFile路径: {icon_path}")
                         if icon_path and Path(icon_path).exists():
                             icon = QIcon(icon_path)
                             if not icon.isNull():
-                                print("[DEBUG] 使用IconFile图标成功")
                                 return icon
                         break
             except Exception as e:
@@ -1127,14 +1050,8 @@ def get_file_icon(file_path):  # 使用获取文件图标
         else:
             print("[DEBUG] 处理普通文件")
             file_info = QFileInfo(file_path)
-
-        print(f"[DEBUG] 使用QFileIconProvider获取图标")
         icon_provider = QFileIconProvider()
         icon = icon_provider.icon(file_info)
-        if not icon.isNull():
-            print("[DEBUG] 图标获取成功")
-        else:
-            print("[DEBUG] 图标获取失败，返回空图标")
         return icon
     except Exception as e:
         print(f"[ERROR] 获取文件图标失败 {file_path}: {e}")
@@ -1187,8 +1104,8 @@ def DefMainWinSize():#处理主窗口属性
         ScrXYTrue = ScrXY.availableGeometry()
         SCR_WIDTH = ScrXYTrue.width()  # 获取屏幕可用宽度
         SCR_HEIGHT = ScrXYTrue.height()  # 获取屏幕可用高度
-        initial_w= int(SCR_WIDTH * 0.8)  # 初始窗口宽度为屏幕宽度的80%
-        initial_h = int(SCR_HEIGHT * 0.8)  # 初始窗口高度为屏幕高度的80%
+        initial_w= int(SCR_WIDTH * WIN_RATIO)  # 窗口宽度
+        initial_h = int(SCR_HEIGHT * WIN_RATIO)  # 窗口高度
         inner_w = initial_w - 4*sidelen #内部可用宽度
         inner_h = initial_h - 4*sidelen
         blocks_x = ceil(inner_w / SideLen)  #方块数量
@@ -1232,7 +1149,7 @@ def CR_Mwin():#主窗口
     Mwin = QMainWindow()
     Mwin.resize(MWIN_WIDTH, MWIN_HEIGHT)#窗口大小
     Mwin.move(START_X,START_Y)#窗口位置
-    Mwin.setWindowOpacity(0.75)
+    Mwin.setWindowOpacity(OPACITY)
     Mwin.setWindowFlags(Mwin.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)#置顶
     Mwin.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose)
     flags = (
@@ -1240,6 +1157,8 @@ def CR_Mwin():#主窗口
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool)#窗口属性
     Mwin.setWindowFlags(flags)
+    main_window_style = f"QMainWindow {{ background-color: {ColorList[2]}; }}"
+    Mwin.setStyleSheet(main_window_style)
     icon_path = "data/Drawer.ico"
     if getattr(sys, 'frozen', False):
         base_path = sys._MEIPASS
@@ -1279,6 +1198,7 @@ def CR_Mwin():#主窗口
         window_0 = CtrlCTN(name='未命名', parent=M_mdi_area)# 出错时创建默认窗口，确保程序不会崩溃
         M_mdi_area.addSubWindow(window_0)
         window_0.show()
+    create_rest_prompt_window(Mwin)
     Mwin.show()
     return Mwin
 
@@ -1311,7 +1231,7 @@ def _toggle_caps_lock_if_on(): #检查大写锁定状态并关闭  # 增
         print(f"[ERROR] 关闭大写锁定失败: {e}")
 
 def BD_kSC(Mwin):#快捷键触发的事件，隐藏动画或显示动画
-    GL_Lsn = GlobalHotkeyListener(hotkey='<alt>+<caps_lock>')
+    GL_Lsn = GlobalHotkeyListener(hotkey=HOTKEY)
     Mwin.hotkey_listener = GL_Lsn
     def toggle_window():
         try:
@@ -1326,6 +1246,14 @@ def BD_kSC(Mwin):#快捷键触发的事件，隐藏动画或显示动画
 
     GL_Lsn.Evt.connect(toggle_window)
     GL_Lsn.start_listening()
+
+def restart_hotkey_listener(Mwin):  # 重启快捷键监听
+    try:
+        if hasattr(Mwin, 'hotkey_listener') and Mwin.hotkey_listener:
+            Mwin.hotkey_listener.stop_listening()
+        BD_kSC(Mwin)
+    except Exception as e:
+        print(f"[ERROR] 重启快捷键监听失败: {e}")
 
 def add_func_menu_button(Mwin):  # 在主窗口添加功能菜单按钮
     # 创建功能菜单按钮
@@ -1344,12 +1272,9 @@ def add_func_menu_button(Mwin):  # 在主窗口添加功能菜单按钮
     )
     func_menu.setFixedSize(384, 384)
     func_menu.setWindowOpacity(0.8)
-    func_menu.setStyleSheet("""
-        QWidget {
-            border: 2px solid #cccccc;
-            border-radius: 8px;
-        }
-    """)
+    func_menu_style = (f"QWidget {{ "
+                       f"border: 2px solid {ColorList[6]}; background-color: {ColorList[2]}; }}")
+    func_menu.setStyleSheet(func_menu_style)
     func_menu.hide()
     # 创建布局和按钮容器
     layout = QGridLayout(func_menu)
@@ -1572,16 +1497,11 @@ def show_buttons_name(Mwin): #在所有子窗口的按钮上显示名称覆盖�
             # 创建覆盖层
             overlay = QLabel(wrapped_text, parent_button)
             overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            overlay.setStyleSheet("""
-                QLabel {
-                    background-color: rgba(0, 0, 0, 180);
-                    color: white;
-                    border: 1px solid rgba(255, 255, 255, 100);
-                    border-radius: 4px;
-                    font-size: 9px;
-                    padding: 2px;
-                }
-            """)
+            button_overlay_style = f"""
+            QLabel {{background-color: rgba(0, 0, 0, 180);color: {ColorList[1]};
+                border: 1px solid rgba(255, 255, 255, 100);
+                border-radius: 4px;font-size: 9px;padding: 2px;}}"""
+            overlay.setStyleSheet(button_overlay_style)
             overlay.setGeometry(0, 0, parent_button.width(), parent_button.height())
             overlay.show()
             QTimer.singleShot(5000, overlay.deleteLater)
@@ -1690,17 +1610,737 @@ def open_RepoFolder():  # 用文件资源管理器打开data\ExeLink文件夹
     except Exception as e:
         print(f"[ERROR] 打开文件夹失败: {e}")
 
-def show_settings_dialog(Mwin):  # 增
+def create_rest_prompt_window(Mwin): # 创建响铃提示窗口
+    time_display = [None]
+    next_prompt_display = [None]
+    rest_timer = QTimer()
+    rest_timer.setSingleShot(True)
+    def load_rest_settings():  # 增：加载响铃提示设置
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+                config_path = os.path.join(base_path, "config.json")
+            else:
+                config_path = "config.json"
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                # 确保settings字段存在并读取rest_prompt
+                rest_config = config.get("rest_prompt", {})  # 改
+                return {
+                    "geometry": rest_config.get("geometry", [100, 100, (int(SCR_WIDTH * 0.24)), (int(SCR_HEIGHT * 0.2))]),
+                    "interval": rest_config.get("interval", 10)
+                }
+        except Exception as e:
+            print(f"[ERROR] 加载响铃提示设置失败: {e}")
+        return {"geometry": [100, 100, (int(SCR_WIDTH * 0.24)), (int(SCR_HEIGHT * 0.2))], "interval": 10}
+
+    def save_rest_settings(geometry=None, interval=None):  # 增：保存提示间隔设置
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+                config_path = os.path.join(base_path, "config.json")
+            else:
+                config_path = "config.json"
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            if "rest_prompt" not in config:
+                config["rest_prompt"] = {}
+            if geometry:
+                config["rest_prompt"]["geometry"] = geometry
+            if interval is not None:
+                config["rest_prompt"]["interval"] = interval
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[ERROR] 保存响铃提示设置失败: {e}")
+
+    def update_time_display(): # 更新时间显示
+        nonlocal time_display
+        try:
+            current_time = QTime.currentTime()
+            time_str = current_time.toString("hh:mm:ss")
+            formatted_time = f"{time_str[0]} {time_str[1]}:{time_str[3]} {time_str[4]}:{time_str[6]} {time_str[7]}"
+            if time_display[0]:
+                time_display[0].display(formatted_time)
+        except Exception as e:
+            print(f"[ERROR] 更新时间显示失败: {e}")
+
+    def show_rest_alert():  #显示休息提醒
+        try:
+            if Mwin.isHidden() or Mwin.y() < 0:
+                Anim_AppearMwin(Mwin)
+            # 显示提醒消息
+            def delayed_show_dialog():
+                dialog = MessageDialog(
+                    parent=Mwin, editable=False, default_text="", modal=False,
+                    title="响铃提醒", message="铃声已响起！",
+                    width=300, height=150, auto_close=5000)
+                dialog.show()
+            QTimer.singleShot(500, delayed_show_dialog)
+            QTimer.singleShot(5000, lambda: Anim_HideMwin(Mwin) if not Mwin.isHidden() else None)
+            # 如果启用循环，重新设置定时器
+            if REST_PROMPT_LOOP:
+                if hasattr(rest_timer, 'last_interval'):
+                    setup_rest_timer(rest_timer.last_interval // (60 * 1000))
+                else:
+                    setup_rest_timer(5)
+                update_next_prompt_display()
+            else:
+                rest_timer.stop()
+                update_next_prompt_display()
+        except Exception as e:
+            print(f"[ERROR] 显示休息提醒失败: {e}")
+
+    def clear_rest_timer():  # 清除休息定时器
+        try:
+            rest_timer.stop()
+            update_next_prompt_display()  # 更新显示
+            print("[INFO] 下次响铃已取消")
+        except Exception as e:
+            print(f"[ERROR] 清除定时器失败: {e}")
+
+    def update_next_prompt_display():  # 更新下次提示时间显示
+        nonlocal next_prompt_display
+        try:
+            if rest_timer.isActive():
+                # 计算下次提示时间
+                remaining_time = rest_timer.remainingTime()
+                next_time = QDateTime.currentDateTime().addMSecs(remaining_time)
+                time_str = next_time.toString("hh:mm:ss")
+                formatted_time = time_str
+            else:
+                formatted_time = "--:--:--"
+            if next_prompt_display[0]:
+                next_prompt_display[0].display(formatted_time)
+        except Exception as e:
+            print(f"[ERROR] 更新下次提示时间显示失败: {e}")
+
+    def setup_rest_timer(minutes=None):  # 设置休息定时器
+        try:
+            rest_timer.stop()
+            if minutes is not None and minutes > 0:
+                interval = minutes * 60 * 1000
+                rest_timer.start(interval)
+                rest_timer.last_interval = interval
+                update_next_prompt_display()
+        except Exception as e:
+            print(f"[ERROR] 设置定时器失败: {e}")
+
+    def setup_next_prompt():  #设置下次提示时间
+        try:
+            default_interval = rest_settings.get("interval", 10)  # 改
+            dialog = MessageDialog(
+                parent=Mwin, editable=True, default_text=str(default_interval), modal=True,
+                title="设置响铃间隔", message="请输入提示间隔时间（分钟）:",
+                width=350, height=150, auto_close=0)
+            result = dialog.exec()
+            if result == QDialog.DialogCode.Accepted:
+                minutes_text = dialog.user_input.strip()
+                if minutes_text:
+                    try:
+                        minutes = int(minutes_text)
+                        if minutes > 0:
+                            setup_rest_timer(minutes)
+                            save_rest_settings(interval=minutes)
+                        else:
+                            raise ValueError("时间必须大于0")
+                    except ValueError as e:
+                        error_dialog = MessageDialog(
+                            parent=Mwin, editable=False, default_text="", modal=True,
+                            title="输入错误", message="请输入有效的正整数",
+                            width=300, height=150, auto_close=0)
+                        error_dialog.exec()
+        except Exception as e:
+            print(f"[ERROR] 设置下次提示时间失败: {e}")
+
+    def toggle_loop_prompt(state): # 切换循环提示设置
+        global REST_PROMPT_LOOP
+        REST_PROMPT_LOOP = bool(state)
+
+    rest_settings = load_rest_settings()
+    time_timer = QTimer()
+    time_timer.timeout.connect(update_time_display)
+    time_timer.start(1000)
+    rest_timer.timeout.connect(show_rest_alert)
     try:
-        Anim_HideMwin(Mwin)
-        dialog = MessageDialog(
-            parent=Mwin, editable=False, default_text="敬请期待", modal=True,
-            title="设置", message="还没做完",
-            width=350, height=150, auto_close=4000)
-        def on_dialog_finished():
-            Anim_AppearMwin(Mwin)
-        dialog.finished.connect(on_dialog_finished)
-        dialog.exec()
+        mdi_area = Mwin.centralWidget()
+        if not isinstance(mdi_area, QMdiArea):
+            return
+        # 创建休息提示子窗口
+        rest_window = QMdiSubWindow(mdi_area)
+        rest_window.setWindowTitle("简易时钟")
+        saved_geo = rest_settings.get("geometry",[100, 100, (int(SCR_WIDTH * 0.24)), (int(SCR_HEIGHT * 0.2))])
+        rest_window.setGeometry(*saved_geo)
+        rest_window.setMinimumSize(int(SCR_WIDTH * 0.24), int(SCR_HEIGHT * 0.2))
+        rest_window.setWindowFlags(
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.SubWindow |
+            Qt.WindowType.WindowTitleHint)
+        rest_window_style = f"QMdiSubWindow {{ border: 2px solid {ColorList[6]} !important; background-color: {ColorList[2]}; color: {ColorList[1]}; }}"
+        rest_window.setStyleSheet(rest_window_style)
+        def on_rest_window_geometry_changed():  # 自动保存几何属性
+            if rest_window and rest_window.isVisible():
+                current_geo = rest_window.geometry()
+                geo_list = [current_geo.x(), current_geo.y(),
+                            current_geo.width(), current_geo.height()]
+                save_rest_settings(geometry=geo_list)
+                rest_window.update()
+                rest_window.repaint()
+        rest_window.geometry_timer = QTimer()
+        rest_window.geometry_timer.setSingleShot(True)
+        rest_window.geometry_timer.timeout.connect(on_rest_window_geometry_changed)
+        def rest_window_resize_event(event):
+            # 正确调用父类的resizeEvent
+            QMdiSubWindow.resizeEvent(rest_window, event)  # 改
+            rest_window.geometry_timer.start(500)
+            # 强制刷新样式
+            rest_window.style().unpolish(rest_window)
+            rest_window.style().polish(rest_window)
+            rest_window.update()
+        def rest_window_move_event(event):
+            # 正确调用父类的moveEvent
+            QMdiSubWindow.moveEvent(rest_window, event)  # 改
+            rest_window.geometry_timer.start(500)
+            # 强制刷新样式
+            rest_window.style().unpolish(rest_window)
+            rest_window.style().polish(rest_window)
+            rest_window.update()
+        rest_window.resizeEvent = rest_window_resize_event
+        rest_window.moveEvent = rest_window_move_event
+        # 创建中心widget
+        central_widget = QWidget()
+        rest_window.setWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        # 创建时间显示标签
+        time_display[0] = QLCDNumber()
+        print(f"[DEBUG] time_display已赋值: {time_display[0] is not None}")
+        time_display[0].setDigitCount(11)
+        time_display[0].setSegmentStyle(QLCDNumber.SegmentStyle.Flat)
+        time_display_style = f"QLCDNumber {{ color: {ColorList[1]}; background-color: transparent; border: none; }}"
+        time_display[0].setStyleSheet(time_display_style)
+        time_display[0].setFixedSize(int(SCR_WIDTH * 0.15), int(SCR_HEIGHT * 0.05))
+        layout.addWidget(time_display[0], alignment=Qt.AlignmentFlag.AlignCenter)
+        update_time_display()
+        # 创建按钮水平布局
+        controls_layout = QHBoxLayout()
+        setup_button = QPushButton("下次响铃提示：")
+        setup_button.setFixedSize(100, 30)
+        setup_button_style = f"""
+        QPushButton {{background-color: {ColorList[3]};color: {ColorList[1]};border: 
+            1px solid {ColorList[5]};
+            font-size: 12px;}}
+        QPushButton:hover {{background-color: {ColorList[4]};}}
+        QPushButton:pressed {{background-color: {ColorList[5]};}}"""
+        setup_button.setStyleSheet(setup_button_style)
+        setup_button.clicked.connect(setup_next_prompt)
+        controls_layout.addWidget(setup_button)
+        next_prompt_display[0] = QLCDNumber()
+        next_prompt_display[0].setDigitCount(8)
+        next_prompt_display[0].setSegmentStyle(QLCDNumber.SegmentStyle.Flat)
+        next_prompt_style = f"QLCDNumber {{ color: {ColorList[1]}; background-color: transparent; border: none; }}"
+        next_prompt_display[0].setStyleSheet(next_prompt_style)
+        next_prompt_display[0].setFixedSize(int(SCR_WIDTH * 0.08), int(SCR_HEIGHT * 0.03))
+        next_prompt_display[0].setToolTip("下次响铃提示时间\n点击取消提示")  # 增：悬停提示
+        next_prompt_display[0].mousePressEvent = lambda event: clear_rest_timer()  # 增：点击事件
+        controls_layout.addWidget(next_prompt_display[0])
+        # 创建循环提示复选框
+        loop_checkbox = QCheckBox("循环")
+        loop_checkbox.setChecked(REST_PROMPT_LOOP)
+        loop_checkbox_style = f"""
+        QCheckBox {{color: {ColorList[1]};font-size: 12px;spacing: 5px;
+            border: 3px solid {ColorList[5]};padding: 4px 8px;background-color: {ColorList[2]};}}
+        QCheckBox::indicator {{width: 16px;height: 16px;}}
+        QCheckBox::indicator:unchecked {{border: 1px solid {ColorList[6]};background-color: {ColorList[3]};}}
+        QCheckBox::indicator:checked {{border: 1px solid {ColorList[6]};background-color: {ColorList[5]};}}"""
+        loop_checkbox.setStyleSheet(loop_checkbox_style)
+        loop_checkbox.stateChanged.connect(toggle_loop_prompt)
+        controls_layout.addStretch(1)
+        controls_layout.addWidget(loop_checkbox)
+        layout.addLayout(controls_layout)
+        update_next_prompt_display()
+        mdi_area.addSubWindow(rest_window)
+        rest_window.show()
+        rest_window.time_timer = time_timer
+        rest_window.rest_timer = rest_timer
+        return rest_window
+    except Exception as e:
+        print(f"[ERROR] 创建简易时钟窗口失败: {e}")
+        return None
+
+def show_settings_dialog(Mwin):
+    try:
+        settings_window = SettingsWindow(Mwin)
+        settings_window.show()
     except Exception as e:
         print(f"[ERROR] 显示设置对话框失败: {e}")
-        Anim_AppearMwin(Mwin)
+
+class SettingsWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_mwin = parent
+        self.settings = self._load_settings()
+        if "hotkey" not in self.settings:
+            self.settings["hotkey"] = HOTKEY
+        self._setup_ui()
+        settings_window_bg_style = f"""
+        QMainWindow {{background-color: {ColorList[2]};color: {ColorList[1]};}}
+        QWidget {{background-color: {ColorList[2]};color: {ColorList[1]};}}"""
+        self.setStyleSheet(settings_window_bg_style)
+
+    def _setup_ui(self): #设置窗口UI界面
+        self.setWindowTitle("设置")
+        self.setFixedSize(768, 432)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint |
+                            Qt.WindowType.CustomizeWindowHint)
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        # 主布局
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+        # 分组布局
+        Group_layout = QHBoxLayout()
+        Group_layout.setSpacing(20)
+        Group_layout.addWidget(self._create_func_group()) # 功能组
+        Group_layout.addWidget(self._create_appr_group()) # 外观组
+        main_layout.addLayout(Group_layout)
+        main_layout.addStretch(1)
+        main_layout.addWidget(self._create_button_area())
+
+    def _create_func_group(self): # 创建功能组
+        group_box = QGroupBox("功能设置")
+        func_group_border_style = f"""
+        QGroupBox {{font-weight: bold;font-size: 15px;padding-top: 15px;margin-top: 10px;color: {ColorList[1]};
+            background-color: {ColorList[2]};border: 2px solid {ColorList[5]};border-radius: 5px;}}
+        QGroupBox::title {{subcontrol-origin: margin;left: 10px;
+            padding: -5 5px -5 5px;color: {ColorList[1]};}}"""
+        group_box.setStyleSheet(func_group_border_style)
+        layout = QVBoxLayout(group_box)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 20, 15, 15)
+        group_box.setMaximumHeight(360)
+        layout.addWidget(self._set_auto_caps_lock_off())
+        layout.addWidget(self._set_auto_collapse_Mwin())
+        layout.addWidget(self._set_custom_hotkey())
+        return group_box
+
+    def _create_appr_group(self): # 创建外观组
+        group_box = QGroupBox("外观设置")
+        appr_group_border_style = f"""
+        QGroupBox {{font-weight: bold;font-size: 15px;padding-top: 15px;margin-top: 10px;color: {ColorList[1]};
+            background-color: {ColorList[2]};border: 2px solid {ColorList[5]};border-radius: 5px;}}
+        QGroupBox::title {{subcontrol-origin: margin;left: 10px;
+            padding: -5 5px -5 5px;color: {ColorList[1]};}}"""
+        group_box.setStyleSheet(appr_group_border_style)
+        layout = QVBoxLayout(group_box)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.addWidget(self._set_opacity_level())
+        layout.addWidget(self._set_example_combo_setting())
+        layout.addWidget(self._set_example_slider_setting())
+        layout.addStretch(1)
+        return group_box
+
+    def _set_auto_caps_lock_off(self): #创建自动关闭大写锁定设置
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        auto_caps_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(auto_caps_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.auto_caps_checkbox = QCheckBox("自动关闭大写锁定")
+        self.auto_caps_checkbox.setChecked(self.settings.get("auto_caps", AUTO_CAPS))
+        self.auto_caps_checkbox.stateChanged.connect(lambda state: print(f"自动关闭大写锁定: {'启用' if state else '禁用'}"))
+        checkbox_full_style = f"""
+                QCheckBox {{font-size: 15px;color: {ColorList[1]};}}
+                QCheckBox::indicator {{width: 16px;height: 16px;}}
+                QCheckBox::indicator:unchecked {{border: 1px solid {ColorList[6]};background-color: {ColorList[2]};}}
+                QCheckBox::indicator:checked {{border: 1px solid {ColorList[6]};background-color: {ColorList[1]};}}"""
+        self.auto_caps_checkbox.setStyleSheet(checkbox_full_style)
+        layout.addWidget(self.auto_caps_checkbox)
+        tip_label = QLabel("?")
+        tip_label.setToolTip("在使用快捷键后会自动关闭大写锁定")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _set_auto_collapse_Mwin(self): #自动收起主窗口
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        auto_hide_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(auto_hide_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.auto_hide_checkbox = QCheckBox("自动收起抽屉窗口")
+        self.auto_hide_checkbox.setChecked(self.settings.get("auto_hide", AUTO_HIDE))
+        self.auto_hide_checkbox.stateChanged.connect(lambda state: print(f"自动隐藏: {'启用' if state else '禁用'}"))
+        checkbox_full_style = f"""
+                QCheckBox {{font-size: 15px;color: {ColorList[1]};}}
+                QCheckBox::indicator {{width: 16px;height: 16px;}}
+                QCheckBox::indicator:unchecked {{border: 1px solid {ColorList[6]};background-color: {ColorList[2]};}}
+                QCheckBox::indicator:checked {{border: 1px solid {ColorList[6]};background-color: {ColorList[1]};}}"""
+        self.auto_hide_checkbox.setStyleSheet(checkbox_full_style)
+        layout.addWidget(self.auto_hide_checkbox)
+        tip_label = QLabel("?")
+        tip_label.setToolTip("点击窗口中的任意一个按钮后会自动隐藏抽屉窗口")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _set_custom_hotkey(self): #设置快捷键
+        # 修饰键映射字典
+        self.modifier_keys = {
+            "Ctrl": "<ctrl>",
+            "Alt": "<alt>",
+            "Shift": "<shift>",
+        }
+        # 普通键映射字典
+        self.normal_keys = {
+            "F1": "<f1>", "F2": "<f2>", "F3": "<f3>", "F5": "<f5>",
+            "F6": "<f6>", "F7": "<f7>", "F8": "<f8>", "F9": "<f9>", "F10": "<f10>",
+            "F11": "<f11>", "F12": "<f12>",
+            "A": "a", "B": "b", "C": "c", "D": "d", "E": "e", "F": "f", "G": "g",
+            "H": "h", "I": "i", "J": "j", "K": "k", "L": "l", "M": "m", "N": "n",
+            "O": "o", "P": "p", "Q": "q", "R": "r", "S": "s", "T": "t", "U": "u",
+            "V": "v", "W": "w", "X": "x", "Y": "y", "Z": "z",
+            "0": "0", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6",
+            "7": "7", "8": "8", "9": "9",
+            "空格": "<space>", "回车": "<enter>", "退格": "<backspace>",
+            "插入": "<insert>", "Home": "<home>", "Page Up": "<page_up>",
+            "Page Down": "<page_down>", "End": "<end>",
+            "左箭头": "<left>", "右箭头": "<right>", "上箭头": "<up>", "下箭头": "<down>",
+            "Caps Lock": "<caps_lock>", "Scroll Lock": "<scroll_lock>",
+            "Num Lock": "<num_lock>", "Pause": "<pause>",
+            "Print Screen": "<print_screen>", "菜单键": "<menu>",
+            "小键盘0": "<num_0>", "小键盘1": "<num_1>", "小键盘2": "<num_2>",
+            "小键盘3": "<num_3>", "小键盘4": "<num_4>", "小键盘5": "<num_5>",
+            "小键盘6": "<num_6>", "小键盘7": "<num_7>", "小键盘8": "<num_8>",
+            "小键盘9": "<num_9>",
+            "小键盘*": "<num_multiply>", "小键盘+": "<num_add>",
+            "小键盘-": "<num_subtract>", "小键盘.": "<num_decimal>",
+            "小键盘/": "<num_divide>", "小键盘回车": "<num_enter>"
+        }
+        def _show_modifier_menu(button):  # 显示修饰键菜单
+            menu = QMenu(self)
+            menu.setWindowOpacity(0.8)
+            modifier_menu_style = f"""
+            QMenu {{background-color: {ColorList[2]};border: 1px solid {ColorList[5]};}}
+            QMenu::item {{padding: 8px 16px;color: {ColorList[1]};}}
+            QMenu::item:selected {{background-color: {ColorList[4]};}}"""
+            menu.setStyleSheet(modifier_menu_style)
+            for display_name, key_value in self.modifier_keys.items():
+                action = menu.addAction(display_name)
+                action.triggered.connect(
+                    lambda checked, name=display_name,
+                           btn=button: _update_modifier_button(name, btn))
+            btn_pos = button.mapToGlobal(button.rect().bottomLeft())
+            menu.exec(btn_pos)
+
+        def _show_normal_key_menu(button):  # 显示普通键菜单
+            menu = QMenu(self)
+            menu.setWindowOpacity(0.8)
+            normal_key_menu_style = f"""
+            QMenu {{background-color: {ColorList[2]};border: 1px solid {ColorList[5]};}}
+            QMenu::item {{padding: 8px 16px;color: {ColorList[1]};}}
+            QMenu::item:selected {{background-color: {ColorList[4]};}}"""
+            menu.setStyleSheet(normal_key_menu_style)
+            categories = {
+                "功能键": ["F1", "F2", "F3", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"],
+                "字母键": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+                           "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"],
+                "数字键": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+                "控制键": ["空格", "回车", "Tab", "退格", "插入", "Home", "Page Up", "Page Down", "End"],
+                "方向键": ["左箭头", "右箭头", "上箭头", "下箭头"],
+                "锁定键": ["Caps Lock", "Scroll Lock", "Num Lock", "Pause"],
+                "其他键": ["Print Screen", "菜单键"],
+                "小键盘": ["小键盘0", "小键盘1", "小键盘2", "小键盘3", "小键盘4", "小键盘5",
+                           "小键盘6", "小键盘7", "小键盘8", "小键盘9", "小键盘*", "小键盘+",
+                           "小键盘-", "小键盘.", "小键盘/", "小键盘回车"]}
+            for category, keys in categories.items():
+                submenu = menu.addMenu(category)
+                submenu_style = f"""
+                QMenu {{background-color: {ColorList[2]};border: 1px solid {ColorList[5]};}}
+                QMenu::item {{padding: 8px 16px;color: {ColorList[1]};}}
+                QMenu::item:selected {{background-color: {ColorList[4]};}}"""
+                submenu.setStyleSheet(submenu_style)
+                for key_name in keys:
+                    action = submenu.addAction(key_name)
+                    action.triggered.connect(
+                        lambda checked, name=key_name,
+                               btn=button: _update_normal_key_button(name, btn))
+            btn_pos = button.mapToGlobal(button.rect().bottomLeft())
+            menu.exec(btn_pos)
+
+        def _update_modifier_button(display_name, button):  # 更新修饰键按钮
+            button.setText(display_name)
+            _update_hotkey_display()
+
+        def _update_normal_key_button(display_name, button):  # 更新普通键按钮
+            button.setText(display_name)
+            _update_hotkey_display()
+
+        def _update_hotkey_display():  # 更新快捷键显示
+            modifier_display = self.modifier_button.text()
+            normal_key_display = self.normal_key_button.text()
+            if modifier_display != "选择修饰键" and normal_key_display != "选择按键":
+                modifier_value = self.modifier_keys.get(modifier_display, "")
+                normal_value = self.normal_keys.get(normal_key_display, "")
+                if modifier_value and normal_value:
+                    self.current_hotkey = f"{modifier_value}+{normal_value}"
+
+        def _parse_current_hotkey():  # 解析当前快捷键
+            current_hotkey = self.settings.get("hotkey", HOTKEY)
+            clean_hotkey = current_hotkey.strip()
+            parts = clean_hotkey.replace('<', '').replace('>', '').split('+')
+            # 查找修饰键
+            modifier_display = "选择修饰键"
+            if len(parts) >= 2:
+                modifier_part = parts[0].lower()
+                for display, value in self.modifier_keys.items():
+                    clean_value = value.replace('<', '').replace('>', '')  # 改
+                    if modifier_part == clean_value:
+                        modifier_display = display
+                        break
+            # 查找普通键
+            normal_key_display = "选择按键"
+            if parts:
+                normal_key_part = parts[-1].lower()
+                for display, value in self.normal_keys.items():
+                    clean_value = value.replace('<', '').replace('>', '')  # 改
+                    if normal_key_part == clean_value:
+                        normal_key_display = display
+                        break
+            return modifier_display, normal_key_display
+
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        hotkey_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(hotkey_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        hotkey_label = QLabel("快捷键:")
+        hotkey_label.setFont(QFont("", 12))
+        hotkey_label_style = f"color: {ColorList[1]}; font-size: 15px;"
+        hotkey_label.setStyleSheet(hotkey_label_style)
+        layout.addWidget(hotkey_label)
+        # 修饰键按钮
+        hotkey_button_style = f"""
+        QPushButton {{background-color: {ColorList[3]};color: {ColorList[1]};border: 1px solid {ColorList[5]};
+            border-radius: 3px;padding: 4px 8px;font-size: 12px;}}
+        QPushButton:hover {{background-color: {ColorList[4]};}}
+        QPushButton:pressed {{background-color: {ColorList[5]};}}"""
+        self.modifier_button = QPushButton()
+        modifier_display, normal_display = _parse_current_hotkey()
+        self.modifier_button.setText(modifier_display)
+        self.modifier_button.clicked.connect(lambda: _show_modifier_menu(self.modifier_button))
+        self.modifier_button.setStyleSheet(hotkey_button_style)
+        layout.addWidget(self.modifier_button)
+        # 加号标签
+        plus_label = QLabel("+")
+        plus_label.setStyleSheet(f"color: {ColorList[1]}; font-size: 14px; padding: 0 8px;")
+        layout.addWidget(plus_label)
+        # 普通键按钮
+        self.normal_key_button = QPushButton()
+        self.normal_key_button.setText(normal_display)
+        self.normal_key_button.clicked.connect(lambda: _show_normal_key_menu(self.normal_key_button))
+        self.normal_key_button.setStyleSheet(hotkey_button_style)
+        layout.addWidget(self.normal_key_button)
+        # 初始化当前快捷键
+        _update_hotkey_display()
+        tip_label = QLabel("?")
+        tip_label.setToolTip("设置显示/隐藏抽屉窗口的全局快捷键\n点击按钮选择修饰键和按键")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _set_opacity_level(self): #透明度设置
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        opacity_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(opacity_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        opacity_label = QLabel("主窗口不透明度:")
+        opacity_label.setFont(QFont("", 12))
+        opacity_label_full_style = f"color: {ColorList[1]}; font-size: 15px;"
+        opacity_label.setStyleSheet(opacity_label_full_style)
+        layout.addWidget(opacity_label)
+        self.opacity_spinbox = QSpinBox()
+        self.opacity_spinbox.setRange(0, 100)
+        self.opacity_spinbox.setSuffix("%")
+        self.opacity_spinbox.setValue(int(self.settings.get("opacity", 75) * 100))
+        self.opacity_spinbox.valueChanged.connect(lambda value: print(f"透明度设置为: {value}%"))
+        spinbox_style = f"""
+        QSpinBox {{background-color: {ColorList[3]};color: {ColorList[1]};border: 1px solid {ColorList[5]};
+            border-radius: 3px;padding: 2px 4px;}}
+        QSpinBox::up-button, QSpinBox::down-button {{background-color: {ColorList[4]};border: 1px solid {ColorList[5]};}}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {{background-color: {ColorList[5]};}}"""
+        self.opacity_spinbox.setStyleSheet(spinbox_style)
+        layout.addWidget(self.opacity_spinbox)
+        tip_label = QLabel("?")
+        tip_label.setToolTip("调整抽屉窗口的透明度，范围0%-100%，重启生效")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _set_example_combo_setting(self): # 主题下拉框设置
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        combo_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(combo_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        combo_label = QLabel("主题:")
+        combo_label_style = f"color: {ColorList[1]}; font-size: 15px;"
+        combo_label.setStyleSheet(combo_label_style)
+        layout.addWidget(combo_label)
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["深色主题", "浅色主题"])
+        current_theme = "深色主题" if ColorList == ColorList_Dk else "浅色主题"
+        self.theme_combo.setCurrentText(current_theme)
+        self.theme_combo.currentTextChanged.connect(lambda text: print(f"主题选择: {text}"))
+        combo_box_style = f"""
+        QComboBox {{background-color: {ColorList[3]};color: {ColorList[1]};border: 1px solid {ColorList[5]};
+            border-radius: 3px;padding: 2px 8px;}}
+        QComboBox::drop-down {{border: none;background-color: {ColorList[4]};}}
+        QComboBox::down-arrow {{color: {ColorList[1]};}}
+        QComboBox QAbstractItemView {{background-color: {ColorList[3]};color: {ColorList[1]};
+            border: 1px solid {ColorList[5]};selection-background-color: {ColorList[4]};}}"""
+        self.theme_combo.setStyleSheet(combo_box_style)
+        layout.addWidget(self.theme_combo)
+        tip_label = QLabel("?")
+        tip_label.setToolTip("选择应用程序的主题样式\n重启生效")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _set_example_slider_setting(self): # 创建主窗口大小设置
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        slider_widget_style = f"QWidget {{ background-color: {ColorList[3]}; padding: 8px; }}"
+        widget.setStyleSheet(slider_widget_style)
+        layout.setContentsMargins(0, 0, 0, 0)
+        slider_label = QLabel("窗口大小:")
+        slider_label_style = f"color: {ColorList[1]}; font-size: 15px;"
+        slider_label.setStyleSheet(slider_label_style)
+        layout.addWidget(slider_label)
+        self.win_ratio_slider = QSlider(Qt.Orientation.Horizontal)
+        self.win_ratio_slider.setRange(2, 9)
+        self.win_ratio_slider.setValue(int(WIN_RATIO * 10))
+        self.win_ratio_slider.valueChanged.connect(lambda value: print(f"窗口占比: {value}0%"))
+        slider_style = f"""
+        QSlider::groove:horizontal {{border: 1px solid {ColorList[5]};height: 4px;
+            background-color: {ColorList[3]};border-radius: 2px;}}
+        QSlider::handle:horizontal {{
+            background-color: {ColorList[1]};border: 1px solid {ColorList[5]};
+            width: 12px;margin: -4px 0;border-radius: 6px;}}
+        QSlider::handle:horizontal:hover {{background-color: {ColorList[6]};}}"""
+        self.win_ratio_slider.setStyleSheet(slider_style)
+        layout.addWidget(self.win_ratio_slider)
+        value_label = QLabel(f"{int(WIN_RATIO * 100)}%")
+        value_label.setFixedWidth(20)
+        self.win_ratio_slider.valueChanged.connect(lambda value: value_label.setText(f"{value}0%"))
+        value_label_style = f"color: {ColorList[1]}; background-color: transparent; font-size: 12px;"
+        value_label.setStyleSheet(value_label_style)
+        layout.addWidget(value_label)
+        tip_label = QLabel("?")
+        tip_label.setToolTip("设置主窗口相对于屏幕的尺寸比例\n重启后生效")
+        tip_label.setStyleSheet(" QLabel { color: #666666; font-weight: bold; padding: 2px 6px; }")
+        layout.addWidget(tip_label)
+        layout.addStretch(1)
+        return widget
+
+    def _create_button_area(self): # 创建按钮区域
+        widget = QWidget()
+        widget.setFixedHeight(30)
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        settings_button_style = f"""
+        QPushButton {{background-color: {ColorList[4]};color: {ColorList[1]};border: 1px solid {ColorList[5]};
+            border-radius: 3px;padding: 4px 8px;
+            font-size: 12px;min-width: 60px;max-width: 40px;min-height: 20px;max-height: 20px;}}
+        QPushButton:hover {{background-color: {ColorList[5]};}}
+        QPushButton:pressed {{background-color: {ColorList[6]};}}"""
+        self.apply_btn = QPushButton("应用")
+        self.apply_btn.clicked.connect(self._apply_settings)
+        self.apply_btn.setStyleSheet(settings_button_style)
+        layout.addWidget(self.apply_btn)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.close)
+        self.cancel_btn.setStyleSheet(settings_button_style)
+        layout.addWidget(self.cancel_btn)
+        self.ok_btn = QPushButton("确定")
+        self.ok_btn.clicked.connect(self._ok_settings)
+        self.ok_btn.setStyleSheet(settings_button_style)
+        layout.addWidget(self.ok_btn)
+        return widget
+
+    def _load_settings(self): # 从配置文件加载设置
+        try:
+            config_path = "config.json"
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                return config.get("settings", {})
+        except Exception as e:
+            print(f"[ERROR] 加载设置失败: {e}")
+        return {}
+
+    def _save_settings(self): # 保存设置到配置文件
+        try:
+            config_path = "config.json"
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            # 获取当前设置的快捷键
+            current_hotkey = getattr(self, 'current_hotkey', None)
+            if not current_hotkey:
+                # 如果没有设置新的快捷键，使用原来的或默认值
+                current_hotkey = self.settings.get("hotkey", HOTKEY)
+            config["settings"] = {
+                "auto_caps": self.auto_caps_checkbox.isChecked(),
+                "auto_hide": self.auto_hide_checkbox.isChecked(),
+                "opacity": self.opacity_spinbox.value() / 100.0,
+                "win_ratio": self.win_ratio_slider.value() / 10.0,
+                "hotkey": current_hotkey,
+                "theme": self.theme_combo.currentText(),
+            }
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=4)
+            return True
+        except Exception as e:
+            print(f"[ERROR] 保存设置失败: {e}")
+            return False
+
+    def _apply_settings(self): # 应用设置
+        if self._save_settings():
+            # 更新全局变量
+            global AUTO_CAPS, AUTO_HIDE, HOTKEY, OPACITY, WIN_RATIO
+            AUTO_CAPS = self.auto_caps_checkbox.isChecked()
+            AUTO_HIDE = self.auto_hide_checkbox.isChecked()
+            current_hotkey = getattr(self, 'current_hotkey', None)
+            if current_hotkey:
+                HOTKEY = current_hotkey
+            OPACITY = self.opacity_spinbox.value() / 100.0
+            WIN_RATIO = self.win_ratio_slider.value() / 10.0
+            if self.theme_combo.currentText() == "浅色主题":
+                ColorList = ColorList_Lt
+            else:
+                ColorList = ColorList_Dk
+            if self.parent_mwin:
+                self.parent_mwin.setWindowOpacity(OPACITY)
+                if current_hotkey:
+                    restart_hotkey_listener(self.parent_mwin)
+            print("[INFO] 设置已应用")
+
+    def _ok_settings(self):
+        self._apply_settings()
+        self.close()
