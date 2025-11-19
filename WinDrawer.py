@@ -5,11 +5,10 @@ import sys
 from pathlib import Path
 
 import win32api
-import win32event
-import winerror
 from PyQt6.QtWidgets import QApplication
-from visual import (CR_Mwin, Anim_AppearMwin, BD_kSC, add_func_menu_button,
-                    Strict_Spec_CfgFile, )
+from visual import (CR_Mwin, BD_kSC, add_tool_window_button,
+                    Strict_Spec_CfgFile, check_single_instance, Mwin_ToggleState)
+from PyQt6.QtCore import Qt
 
 def create_resources():#创建必要的资源和配置文件，符合规范
     if getattr(sys, 'frozen', False):
@@ -33,6 +32,7 @@ def create_resources():#创建必要的资源和配置文件，符合规范
                 "Geo=Geometry几何属性",
                 "Btn=Buttons按钮列表",
                 "Pth=Path路径"
+                "State=是否折叠状态"
             ],
             "LstScanPth": "data/ExeLink",
             "win_order": ["Win_Win0"],
@@ -41,6 +41,7 @@ def create_resources():#创建必要的资源和配置文件，符合规范
                     "win_btn_order": [],
                     "win_btn_data": {},
                     "Win_Win0_N": "未分类",
+                    "Win_Win0_State": True,
                     "Win_Win0_Geo": [10, 10, 364, 364]
                 }
             }
@@ -48,33 +49,13 @@ def create_resources():#创建必要的资源和配置文件，符合规范
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(default_config, f, ensure_ascii=False, indent=4)
 
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+os.environ["QT_SCALE_FACTOR"] = "1"
 def init():
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName("WinDrawer")
     return app
-
-_app_mutex = None
-def check_single_instance(): # 互斥锁
-    global _app_mutex
-    mutex_name = "Global\\WinDrawer_SingleInstance_Mutex"
-    try:
-        mutex = win32event.OpenMutex(win32event.SYNCHRONIZE, False, mutex_name)
-        if mutex:
-            win32api.CloseHandle(mutex)
-            return False
-    except Exception as e:
-        pass
-    # 创建互斥锁并保存为全局变量
-    try:
-        _app_mutex = win32event.CreateMutex(None, True, mutex_name)
-        last_error = win32api.GetLastError()
-        if last_error == winerror.ERROR_ALREADY_EXISTS:
-            return False
-        else:
-            return True
-    except Exception as e:
-        print(f"[DEBUG] 创建互斥锁异常: {e}")
-        return False
 
 def Mfun():
     if not check_single_instance():
@@ -84,16 +65,8 @@ def Mfun():
     app = init()
     Mwin = CR_Mwin()
     BD_kSC(Mwin)
-    Anim_AppearMwin(Mwin)
-    add_func_menu_button(Mwin)
+    Mwin_ToggleState(Mwin)
     sys.exit(app.exec())
 
 if __name__ == '__main__':
     Mfun()
-
-
-'''更新计划：
-.bat快捷方式处理
-与win键同时相应
-网格对齐
-'''
